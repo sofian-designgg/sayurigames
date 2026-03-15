@@ -1,9 +1,5 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {
+module.exports = {
   reactStrictMode: true,
   eslint: { ignoreDuringBuilds: true },
-  typescript: { ignoreBuildErrors: false },
-  serverExternalPackages: ['mongodb'],
 };
-
-module.exports = nextConfig;

@@ -1,113 +1,80 @@
-// Stockage MongoDB : utilisateurs, Sayucoins, classement, rôles en attente
+// Le site n’a pas de base : il appelle l’API du bot (Railway + MongoDB).
 
-import { MongoClient, Collection } from 'mongodb';
+const BOT_API_URL = process.env.BOT_API_URL?.replace(/\/$/, '');
+const SECRET = process.env.SAYURI_BOT_SECRET;
 
-const MONGO_URL = process.env.MONGO_URL;
-let client: MongoClient | null = null;
-
-async function getDb() {
-  if (!MONGO_URL) throw new Error('MONGO_URL est requis. Configure la variable d\'environnement sur Vercel.');
-  if (!client) client = new MongoClient(MONGO_URL);
-  if (!client.topology?.isConnected()) await client.connect();
-  return client.db();
-}
-
-interface UserDoc {
-  _id: string;
-  sayucoins: number;
-  username?: string;
-  avatar?: string;
-}
-
-interface PendingRoleDoc {
-  discordId: string;
-  roleId: string;
-}
-
-function usersCol(): Promise<Collection<UserDoc>> {
-  return getDb().then((db) => db.collection<UserDoc>('users'));
-}
-
-function pendingCol(): Promise<Collection<PendingRoleDoc>> {
-  return getDb().then((db) => db.collection<PendingRoleDoc>('pending_roles'));
+function api(path: string, options: RequestInit = {}) {
+  if (!BOT_API_URL) throw new Error('BOT_API_URL manquant. Configure la variable sur Vercel (URL du bot Railway).');
+  return fetch(`${BOT_API_URL}${path.startsWith('/') ? path : '/' + path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(SECRET ? { Authorization: `Bearer ${SECRET}` } : {}),
+      ...options.headers,
+    },
+  });
 }
 
 export async function getUser(discordId: string) {
-  const col = await usersCol();
-  const doc = await col.findOne({ _id: discordId });
-  if (!doc) return null;
-  return { sayucoins: doc.sayucoins, username: doc.username, avatar: doc.avatar };
+  try {
+    const res = await api(`/api/user/${discordId}`);
+    const data = await res.json();
+    if (!res.ok) return null;
+    return { sayucoins: data.sayucoins ?? 0, username: data.username, avatar: data.avatar };
+  } catch {
+    return null;
+  }
 }
 
 export async function getOrCreateUser(discordId: string, username?: string, avatar?: string) {
-  const col = await usersCol();
-  let doc = await col.findOne({ _id: discordId });
-  if (!doc) {
-    await col.insertOne({
-      _id: discordId,
-      sayucoins: 0,
-      username,
-      avatar,
-    } as UserDoc);
-    return { sayucoins: 0, username, avatar };
+  const res = await api('/api/users', {
+    method: 'POST',
+    body: JSON.stringify({ discordId, username, avatar }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Erreur API bot');
   }
-  if (username !== undefined || avatar !== undefined) {
-    await col.updateOne(
-      { _id: discordId },
-      { $set: { username: username ?? doc.username, avatar: avatar ?? doc.avatar } }
-    );
-    doc = { ...doc, username: username ?? doc.username, avatar: avatar ?? doc.avatar };
-  }
-  return { sayucoins: doc.sayucoins, username: doc.username, avatar: doc.avatar };
+  return res.json();
 }
 
 export async function setUser(
-  discordId: string,
-  data: { sayucoins: number; username?: string; avatar?: string }
+  _discordId: string,
+  _data: { sayucoins: number; username?: string; avatar?: string }
 ) {
-  const col = await usersCol();
-  await col.updateOne(
-    { _id: discordId },
-    { $set: data },
-    { upsert: true }
-  );
+  // Géré côté bot uniquement
 }
 
 export async function addSayucoins(
-  discordId: string,
-  amount: number,
-  username?: string,
-  avatar?: string
+  _discordId: string,
+  _amount: number,
+  _username?: string,
+  _avatar?: string
 ) {
-  const u = await getOrCreateUser(discordId, username, avatar);
-  const newCoins = Math.max(0, u.sayucoins + amount);
-  await setUser(discordId, { ...u, sayucoins: newCoins });
-  return newCoins;
+  // Utilisé uniquement via les routes du bot (games/reward, roulette)
+  return 0;
 }
 
 export async function getRanking(limit = 50) {
-  const col = await usersCol();
-  const docs = await col
-    .find({})
-    .sort({ sayucoins: -1 })
-    .limit(limit)
-    .toArray();
-  return docs.map((d) => ({
-    discordId: d._id,
-    sayucoins: d.sayucoins,
-    username: d.username,
-    avatar: d.avatar,
-  }));
+  try {
+    const res = await api('/api/ranking');
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
 }
 
-export async function addPendingRole(discordId: string, roleId: string) {
-  const col = await pendingCol();
-  await col.insertOne({ discordId, roleId });
+export async function addPendingRole(_discordId: string, _roleId: string) {
+  // Géré dans la route /api/roulette/spin du bot
 }
 
 export async function getAndClearPendingRoles(): Promise<{ discordId: string; roleId: string }[]> {
-  const col = await pendingCol();
-  const list = await col.find({}).toArray();
-  await col.deleteMany({});
-  return list.map((d) => ({ discordId: d.discordId, roleId: d.roleId }));
+  try {
+    const res = await api('/api/bot/pending-roles', { method: 'POST' });
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
 }

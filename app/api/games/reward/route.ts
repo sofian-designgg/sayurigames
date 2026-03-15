@@ -1,23 +1,30 @@
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { addSayucoins } from '@/lib/db';
-import { getReward, type Difficulty } from '@/lib/games';
+
+const BOT_API_URL = process.env.BOT_API_URL?.replace(/\/$/, '');
+const SECRET = process.env.SAYURI_BOT_SECRET;
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) return NextResponse.json({ error: 'Non connecté' }, { status: 401 });
+  if (!BOT_API_URL || !SECRET) return NextResponse.json({ error: 'API bot non configurée' }, { status: 500 });
   const body = await req.json().catch(() => ({}));
-  const difficulty = (body.difficulty as Difficulty) || 'facile';
-  if (!['facile', 'moyen', 'difficile'].includes(difficulty)) {
-    return NextResponse.json({ error: 'Difficulté invalide' }, { status: 400 });
-  }
-  const reward = getReward(difficulty);
-  const newTotal = await addSayucoins(
-    session.user.id,
-    reward,
-    session.user.name ?? undefined,
-    (session.user as any).image ?? undefined
-  );
-  return NextResponse.json({ reward, sayucoins: newTotal });
+  const difficulty = ['facile', 'moyen', 'difficile'].includes(body.difficulty) ? body.difficulty : 'facile';
+  const res = await fetch(`${BOT_API_URL}/api/games/reward`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${SECRET}`,
+    },
+    body: JSON.stringify({
+      discordId: session.user.id,
+      difficulty,
+      username: session.user.name ?? undefined,
+      avatar: (session.user as any).image ?? undefined,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return NextResponse.json({ error: data.error || 'Erreur' }, { status: res.status });
+  return NextResponse.json(data);
 }
