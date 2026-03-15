@@ -6,7 +6,7 @@ const MONGO_URL = process.env.MONGO_URL;
 let client: MongoClient | null = null;
 
 async function getDb() {
-  if (!MONGO_URL) throw new Error('MONGO_URL est requis');
+  if (!MONGO_URL) throw new Error('MONGO_URL est requis. Configure la variable d\'environnement sur Vercel.');
   if (!client) client = new MongoClient(MONGO_URL);
   if (!client.topology?.isConnected()) await client.connect();
   return client.db();
